@@ -22,10 +22,10 @@ def httppretty_fixture():
 
 
 class TestRRequests:
-    @pytest.mark.parametrize(
-        "http_method", ("GET", "POST", "PUT", "DELETE")
-    )
-    def test_requests_succeed_for_http_methods(self, http_method, mock_api, mock_success_text, httppretty_fixture):
+    @pytest.mark.parametrize("http_method", ("GET", "POST", "PUT", "DELETE"))
+    def test_requests_succeed_for_http_methods(
+        self, http_method, mock_api, mock_success_text, httppretty_fixture
+    ):
         httpretty.register_uri(
             http_method,
             mock_api,
