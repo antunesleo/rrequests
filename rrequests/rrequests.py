@@ -1,10 +1,12 @@
 import pybreaker as pybreaker
 import requests
 
+from rrequests.exceptions import CircuitBreakerError
+
 
 def get_rrequests(
     timeout=None,
-    error_threshold=3,
+    error_threshold=5,
     open_duration=30,
 ):
     return RRequest(
@@ -25,15 +27,23 @@ def timeout_decorator(timeout):
     return decorator_request_method
 
 
-def force_exception_on_status_error():
-    def decorator_request_method(request_method):
-        def wrapper(*args, **kwargs):
-            response = request_method(*args, **kwargs)
-            response.raise_for_status()
-            return response
-        return wrapper
+def force_exception_on_status_error(request_method):
+    def wrapper(*args, **kwargs):
+        response = request_method(*args, **kwargs)
+        response.raise_for_status()
+        return response
 
-    return decorator_request_method
+    return wrapper
+
+
+def intercept_circuit_breaker_error(circuit_breaker_method):
+    def wrapper(*args, **kwargs):
+        try:
+            return circuit_breaker_method(*args, **kwargs)
+        except pybreaker.CircuitBreakerError as err:
+            raise CircuitBreakerError(str(err))
+
+    return wrapper
 
 
 class RRequest:
@@ -55,8 +65,10 @@ class RRequest:
         if attribute not in self.cache:
             requests_method = getattr(requests, attribute)
             requests_method = timeout_decorator(timeout=self.timeout)(requests_method)
-            requests_method = force_exception_on_status_error()(requests_method)
-            self.cache[attribute] = self.breaker(requests_method)
+            requests_method = force_exception_on_status_error(requests_method)
+            self.cache[attribute] = intercept_circuit_breaker_error(
+                self.breaker(requests_method)
+            )
         return self.cache[attribute]
 
     def __getattribute__(self, attribute):

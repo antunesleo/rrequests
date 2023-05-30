@@ -1,0 +1,2 @@
+class CircuitBreakerError(Exception):
+    pass
