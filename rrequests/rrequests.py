@@ -25,6 +25,17 @@ def timeout_decorator(timeout):
     return decorator_request_method
 
 
+def force_exception_on_status_error():
+    def decorator_request_method(request_method):
+        def wrapper(*args, **kwargs):
+            response = request_method(*args, **kwargs)
+            response.raise_for_status()
+            return response
+        return wrapper
+
+    return decorator_request_method
+
+
 class RRequest:
     def __init__(
         self,
@@ -42,10 +53,10 @@ class RRequest:
 
     def _getattribute(self, attribute):
         if attribute not in self.cache:
-            function = timeout_decorator(timeout=self.timeout)(
-                getattr(requests, attribute)
-            )
-            self.cache[attribute] = self.breaker(function)
+            requests_method = getattr(requests, attribute)
+            requests_method = timeout_decorator(timeout=self.timeout)(requests_method)
+            requests_method = force_exception_on_status_error()(requests_method)
+            self.cache[attribute] = self.breaker(requests_method)
         return self.cache[attribute]
 
     def __getattribute__(self, attribute):
