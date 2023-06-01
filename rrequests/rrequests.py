@@ -9,7 +9,7 @@ def get_rrequests(
     error_threshold=5,
     open_duration=30,
 ):
-    return RRequest(
+    return RequestsProxy(
         timeout=timeout if timeout else 10,
         error_threshold=error_threshold,
         open_duration=open_duration,
@@ -46,32 +46,41 @@ def intercept_circuit_breaker_error(circuit_breaker_method):
     return wrapper
 
 
-class RRequest:
+class RequestsProxy:
     def __init__(
         self,
         timeout,
         error_threshold,
         open_duration,
     ):
-        self.timeout = timeout
-        self.error_threshold = error_threshold
-        self.open_duration = open_duration
-        self.breaker = pybreaker.CircuitBreaker(
+        self._timeout = timeout
+        self._error_threshold = error_threshold
+        self._open_duration = open_duration
+        self._breaker = pybreaker.CircuitBreaker(
             fail_max=error_threshold, reset_timeout=open_duration
         )
-        self.cache = dict()
+        self._cache = dict()
 
     def _getattribute(self, attribute):
-        if attribute not in self.cache:
+        if attribute not in self._cache:
             requests_method = getattr(requests, attribute)
-            requests_method = timeout_decorator(timeout=self.timeout)(requests_method)
+            requests_method = timeout_decorator(timeout=self._timeout)(requests_method)
             requests_method = force_exception_on_status_error(requests_method)
-            self.cache[attribute] = intercept_circuit_breaker_error(
-                self.breaker(requests_method)
+            self._cache[attribute] = intercept_circuit_breaker_error(
+                self._breaker(requests_method)
             )
-        return self.cache[attribute]
+        return self._cache[attribute]
 
     def __getattribute__(self, attribute):
-        if attribute in ("post", "get", "patch", "delete", "put"):
+        if attribute in ("post", "get", "patch", "delete", "put", "head"):
             return self._getattribute(attribute)
-        return super(RRequest, self).__getattribute__(attribute)
+        if attribute in (
+            "_timeout",
+            "_error_threshold",
+            "_open_duration",
+            "_breaker",
+            "_cache",
+            "_getattribute",
+        ):
+            return super(RequestsProxy, self).__getattribute__(attribute)
+        return getattr(requests, attribute)
