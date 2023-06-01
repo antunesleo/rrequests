@@ -46,7 +46,27 @@ def intercept_circuit_breaker_error(circuit_breaker_method):
     return wrapper
 
 
-class RequestsProxy:
+RESILIENT_METHODS = ("post", "get", "patch", "delete", "put", "head")
+PROXIES_ATTRS = (
+    "_timeout",
+    "_error_threshold",
+    "_open_duration",
+    "_breaker",
+    "_cache",
+    "_session",
+)
+
+
+def decorate_method(method, cache, obj, timeout, breaker):
+    if method not in cache:
+        requests_method = getattr(obj, method)
+        requests_method = timeout_decorator(timeout=timeout)(requests_method)
+        requests_method = force_exception_on_status_error(requests_method)
+        cache[method] = intercept_circuit_breaker_error(breaker(requests_method))
+    return cache[method]
+
+
+class BaseProxy:
     def __init__(
         self,
         timeout,
@@ -61,26 +81,44 @@ class RequestsProxy:
         )
         self._cache = dict()
 
-    def _getattribute(self, attribute):
-        if attribute not in self._cache:
-            requests_method = getattr(requests, attribute)
-            requests_method = timeout_decorator(timeout=self._timeout)(requests_method)
-            requests_method = force_exception_on_status_error(requests_method)
-            self._cache[attribute] = intercept_circuit_breaker_error(
-                self._breaker(requests_method)
-            )
-        return self._cache[attribute]
+
+class SessionProxy(BaseProxy):
+    def __init__(
+        self,
+        timeout,
+        error_threshold,
+        open_duration,
+        session,
+    ):
+        self._session = session
+        super().__init__(timeout, error_threshold, open_duration)
 
     def __getattribute__(self, attribute):
-        if attribute in ("post", "get", "patch", "delete", "put", "head"):
-            return self._getattribute(attribute)
-        if attribute in (
-            "_timeout",
-            "_error_threshold",
-            "_open_duration",
-            "_breaker",
-            "_cache",
-            "_getattribute",
-        ):
+        if attribute in RESILIENT_METHODS:
+            return decorate_method(
+                attribute, self._cache, self._session, self._timeout, self._breaker
+            )
+        if attribute in PROXIES_ATTRS:
+            return super().__getattribute__(attribute)
+        return getattr(self._session, attribute)
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+
+class RequestsProxy(BaseProxy):
+    def __getattribute__(self, attribute):
+        if attribute == "Session":
+            return SessionProxy(
+                self._timeout,
+                self._error_threshold,
+                self._open_duration,
+                requests.Session(),
+            )
+        if attribute in RESILIENT_METHODS:
+            return decorate_method(
+                attribute, self._cache, requests, self._timeout, self._breaker
+            )
+        if attribute in PROXIES_ATTRS:
             return super(RequestsProxy, self).__getattribute__(attribute)
         return getattr(requests, attribute)
